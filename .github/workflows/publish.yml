@@ -20,7 +20,7 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
-            artifact_name: target/release/phasius
+            artifact_name: target/release/make_arrow
             asset_name: make_arrow-linux
 #          - name: windows
 #            os: windows-latest
@@ -28,7 +28,7 @@ jobs:
 #            asset_name: <name>-windows
           - name: macos
             os: macos-latest
-            artifact_name: target/release/phasius
+            artifact_name: target/release/make_arrow
             asset_name: make_arrow-macos
 
     steps:
