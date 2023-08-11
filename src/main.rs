@@ -50,15 +50,12 @@ fn is_file(pathname: &str) -> Result<(), String> {
     }
 }
 
-// -qualities
-// -aligned qualities
-
 pub fn extract(bam_path: &String, output_path: String, threads: usize) {
-    let mut bam = bam::Reader::from_path(&bam_path).expect("Error opening BAM.\n");
+    let mut bam = bam::Reader::from_path(bam_path).expect("Error opening BAM.\n");
     bam.set_threads(threads)
         .expect("Failure setting decompression threads");
     unzip_n!(4);
-    let (lengths, aligned_lengths, identities, mapqs): (Vec<u64>, Vec<u64>, Vec<f64>, Vec<u8>) =
+    let (lengths, aligned_lengths, mapqs, identities): (Vec<u64>, Vec<u64>, Vec<u8>, Vec<f64>) =
         bam.rc_records()
             .map(|r| r.expect("Failure parsing Bam file"))
             .filter(|read| read.flags() & (htslib::BAM_FUNMAP | htslib::BAM_FSECONDARY) as u16 == 0)
@@ -66,8 +63,8 @@ pub fn extract(bam_path: &String, output_path: String, threads: usize) {
                 (
                     read.seq_len() as u64,
                     (read.reference_end() - read.reference_start()) as u64,
-                    gap_compressed_identity(&read) * 100.0,
                     read.mapq(),
+                    gap_compressed_identity(read) * 100.0,
                 )
             })
             .unzip_n_vec();
@@ -111,8 +108,8 @@ pub fn save_as_arrow(
 /// based on https://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
 /// recent minimap2 version have that as the de tag
 /// if that is not present it is calculated from CIGAR and NM
-fn gap_compressed_identity(record: &std::rc::Rc<rust_htslib::bam::Record>) -> f64 {
-    match get_de_tag(record) {
+fn gap_compressed_identity(record: std::rc::Rc<rust_htslib::bam::Record>) -> f64 {
+    match get_de_tag(&record) {
         Some(v) => v as f64,
         None => {
             let mut matches = 0;
@@ -130,7 +127,7 @@ fn gap_compressed_identity(record: &std::rc::Rc<rust_htslib::bam::Record>) -> f6
                     _ => (),
                 }
             }
-            1.0 - ((get_nm_tag(record) - gap_size + gap_count) as f64
+            1.0 - ((get_nm_tag(&record) - gap_size + gap_count) as f64
                 / (matches + gap_count) as f64)
         }
     }
@@ -142,7 +139,8 @@ fn get_nm_tag(record: &bam::Record) -> u32 {
             Aux::U8(v) => u32::from(v),
             Aux::U16(v) => u32::from(v),
             Aux::U32(v) => v,
-            _ => panic!("Unexpected type of Aux {:?}", value),
+            Aux::I32(v) => u32::try_from(v).expect("Identified a negative NM tag"),
+            _ => panic!("Unexpected type of Aux for NM tag: {:?}", value),
         },
         Err(_e) => panic!("Unexpected result while trying to access the NM tag"),
     }
@@ -155,7 +153,7 @@ fn get_de_tag(record: &bam::Record) -> Option<f32> {
     match record.aux(b"de") {
         Ok(value) => match value {
             Aux::Float(v) => Some(100.0 * (1.0 - v)),
-            _ => panic!("Unexpected type of Aux {:?}", value),
+            _ => panic!("Unexpected type of Aux for de tag: {:?}", value),
         },
         Err(_e) => None,
     }
