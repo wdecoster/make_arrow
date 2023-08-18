@@ -20,7 +20,7 @@ use arrow::{
 #[derive(Parser, Debug)]
 #[command(author, version, about="Tool to extract metrics from cram or bam to an arrow file", long_about = None)]
 struct Cli {
-    /// cram or bam file to check
+    /// cram or bam file (or '-' for stdin)
     #[arg(value_parser)]
     input: String,
 
@@ -41,7 +41,10 @@ fn main() {
     extract(&args.input, args.output, args.threads)
 }
 
-fn is_file(pathname: &str) -> Result<(), String> {
+pub fn is_file(pathname: &str) -> Result<(), String> {
+    if pathname == "-" {
+        return Ok(());
+    }
     let path = PathBuf::from(pathname);
     if path.is_file() {
         Ok(())
@@ -51,9 +54,16 @@ fn is_file(pathname: &str) -> Result<(), String> {
 }
 
 pub fn extract(bam_path: &String, output_path: String, threads: usize) {
-    let mut bam = bam::Reader::from_path(bam_path).expect("Error opening BAM.\n");
-    bam.set_threads(threads)
-        .expect("Failure setting decompression threads");
+    let mut bam = if bam_path == "-" {
+        bam::Reader::from_stdin().expect("\n\nError reading alignments from stdin.\nDid you include the file header with -h?\n\n\n\n")
+    } else {
+        bam::Reader::from_path(bam_path)
+            .expect("Error opening BAM/CRAM file.\nIs the input file correct?\n\n\n\n")
+    };
+    bam.set_threads(threads).expect(&format!(
+        "Failure setting {} decompression threads",
+        threads
+    ));
     unzip_n!(4);
     let (lengths, aligned_lengths, mapqs, identities): (Vec<u64>, Vec<u64>, Vec<u8>, Vec<f64>) =
         bam.rc_records()
@@ -147,12 +157,12 @@ fn get_nm_tag(record: &bam::Record) -> u32 {
 }
 
 /// Get the de:f tag from minimap2, which is the gap compressed sequence divergence
-/// Which is converted into percent identity with 100 * (1 - de)
+/// Which is converted into identity with (1.0 - de)
 /// This tag can be absent if the aligner version is not quite recent
 fn get_de_tag(record: &bam::Record) -> Option<f32> {
     match record.aux(b"de") {
         Ok(value) => match value {
-            Aux::Float(v) => Some(100.0 * (1.0 - v)),
+            Aux::Float(v) => Some(1.0 - v),
             _ => panic!("Unexpected type of Aux for de tag: {:?}", value),
         },
         Err(_e) => None,
@@ -176,6 +186,6 @@ fn test_extract() {
     extract(
         &"test-data/small-test-phased.bam".to_string(),
         "test.arrow".to_string(),
-        8,
+        4,
     )
 }
